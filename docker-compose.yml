@@ -1,0 +1,21 @@
+services:
+  node1:
+    build: .
+    command: ["--id", "node1", "--port", "8000", "--peers", "node2=http://node2:8000,node3=http://node3:8000", "--data-dir", "/data"]
+    ports: ["8001:8000"]
+    volumes: ["node1-data:/data"]
+  node2:
+    build: .
+    command: ["--id", "node2", "--port", "8000", "--peers", "node1=http://node1:8000,node3=http://node3:8000", "--data-dir", "/data"]
+    ports: ["8002:8000"]
+    volumes: ["node2-data:/data"]
+  node3:
+    build: .
+    command: ["--id", "node3", "--port", "8000", "--peers", "node1=http://node1:8000,node2=http://node2:8000", "--data-dir", "/data"]
+    ports: ["8003:8000"]
+    volumes: ["node3-data:/data"]
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
