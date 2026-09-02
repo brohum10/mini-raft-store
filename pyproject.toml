@@ -1,9 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mini-raft-store"
-version = "1.0.0"
+version = "1.1.0"
 description = "A compact, durable Raft replicated key-value store"
 requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Soham Jindal"}]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: System :: Distributed Computing",
+]
+
+[project.scripts]
+raftstore-node = "raftstore.server:main"
+raftstore = "raftstore.client:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

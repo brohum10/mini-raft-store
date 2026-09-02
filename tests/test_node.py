@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from raftstore.node import RaftNode
+from raftstore.node import Peer, RaftNode
 
 
 class NodeTest(unittest.TestCase):
@@ -34,3 +34,40 @@ class NodeTest(unittest.TestCase):
             self.assertEqual(2, node.kv["good"])
             self.assertNotIn("bad", node.kv)
 
+    def test_delete_is_replicated_and_replayed_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            node = RaftNode("n1", [], directory)
+            node.start_election()
+            self.assertEqual((True, "n1"), node.put("temporary", {"nested": True}))
+            self.assertEqual((True, "n1"), node.delete("temporary"))
+            self.assertNotIn("temporary", node.kv)
+
+            restarted = RaftNode("n1", [], directory)
+            self.assertNotIn("temporary", restarted.kv)
+            self.assertEqual(node.commit_index, restarted.commit_index)
+
+    def test_linearizable_read_crosses_current_term_barrier(self):
+        with tempfile.TemporaryDirectory() as directory:
+            node = RaftNode("n1", [], directory)
+            node.start_election()
+            node.put("answer", 42)
+            ok, leader, found, value = node.linearizable_get("answer")
+            self.assertEqual((True, "n1", True, 42), (ok, leader, found, value))
+
+    def test_linearizable_read_distinguishes_missing_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            node = RaftNode("n1", [], directory)
+            node.start_election()
+            self.assertEqual((True, "n1", False, None), node.linearizable_get("missing"))
+
+    def test_isolated_leader_cannot_serve_linearizable_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            node = RaftNode("n1", [Peer("n2", "http://unreachable")], directory)
+            node.term = 1
+            node.role, node.leader_id = "leader", "n1"
+            node.log = [{"term": 1, "op": "noop"}]
+            node.leader_barrier_index = 0
+            node.next_index, node.match_index = {"n2": 1}, {"n2": -1}
+            node._rpc = lambda *_args, **_kwargs: None
+
+            self.assertEqual((False, "n1", False, None), node.linearizable_get("key", timeout=.05))

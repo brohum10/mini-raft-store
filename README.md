@@ -1,6 +1,6 @@
 # Mini Raft Store
 
-A dependency-free, durable distributed key-value store that implements the essential Raft protocol. Three nodes elect a leader, replicate writes to a majority, survive process crashes, and repair lagging or conflicting logs after restart.
+A dependency-free, durable distributed key-value store that implements the essential Raft protocol. Three nodes elect a leader, replicate mutations to a majority, serve quorum-verified reads, survive process crashes, and repair lagging or conflicting logs after restart.
 
 > This is an educational Raft subset built to make the protocol inspectable. It is not a replacement for production systems such as etcd.
 
@@ -10,11 +10,14 @@ A dependency-free, durable distributed key-value store that implements the essen
 - Leader heartbeats and automatic failover
 - Raft log matching and conflict repair via `nextIndex` backtracking
 - Majority-acknowledged commits; clients never receive success before quorum
+- Linearizable leader reads guarded by a current-term commit barrier and fresh quorum acknowledgement
+- Replicated `PUT` and `DELETE` operations with deterministic state-machine replay
 - Durable term, vote, log, and commit index using `fsync` plus atomic rename
 - State-machine replay and follower catch-up after a crash
 - HTTP redirects and a leader-discovering CLI client
 - End-to-end tests that kill leaders and followers during cluster activity
 - Persistent Docker volumes and GitHub Actions CI
+- Bounded JSON requests, explicit corruption failures, readiness checks, and per-follower replication diagnostics
 
 ## Architecture
 
@@ -55,7 +58,9 @@ docker compose exec node1 python -m raftstore.client \
   --nodes http://node1:8000,http://node2:8000,http://node3:8000 \
   put order-42 paid
 
-curl -s localhost:8002/kv/order-42
+docker compose exec node1 python -m raftstore.client \
+  --nodes http://node1:8000,http://node2:8000,http://node3:8000 \
+  get order-42
 ```
 
 You can also send a write to any node. Followers respond with HTTP `307` and the known leader in both the `Location` header and JSON body:
@@ -89,13 +94,16 @@ The old leader cannot acknowledge a write without a majority. If it becomes isol
 | Method | Path | Purpose |
 |---|---|---|
 | `PUT` | `/kv/{key}` | Replicate and commit `{ "value": ... }` |
-| `GET` | `/kv/{key}` | Read the locally applied committed value |
+| `DELETE` | `/kv/{key}` | Replicate and commit a key deletion |
+| `GET` | `/kv/{key}` | Read the locally applied committed value (fast, potentially stale) |
+| `GET` | `/kv/{key}?consistency=linearizable` | Verify leadership with a quorum, then read |
 | `GET` | `/status` | Role, term, leader, log, and commit metadata |
 | `GET` | `/health` | Liveness and node status |
+| `GET` | `/ready` | Readiness after a leader is known |
 | `POST` | `/raft/vote` | Internal RequestVote RPC |
 | `POST` | `/raft/append` | Internal AppendEntries RPC |
 
-Reads are local and may briefly lag on a follower. For linearizable reads, query the current leader. Membership is intentionally static and configured at process start.
+The CLI uses linearizable reads by default and follows leader redirects. Pass `get KEY --local` only when lower latency matters more than freshness. Raw `GET /kv/{key}` remains a deliberately explicit local-read endpoint for follower catch-up inspection. Values can be any JSON value; request bodies are capped at 1 MiB and decoded keys at 512 bytes.
 
 ## Run without Docker
 
@@ -110,6 +118,14 @@ python -m raftstore.server --id n3 --port 8003 --data-dir data/n3 \
   --peers n1=http://localhost:8001,n2=http://localhost:8002
 ```
 
+Or install the two command-line entry points locally:
+
+```bash
+python -m pip install -e .
+raftstore-node --help
+raftstore --help
+```
+
 ## Tests
 
 ```bash
@@ -122,10 +138,16 @@ The integration suite launches real OS processes on ephemeral ports and verifies
 2. The remaining majority elects a new leader and continues accepting writes.
 3. The restarted node recovers both pre- and post-failure values.
 4. A follower killed during several writes catches up completely after restart.
+5. A linearizable read sent to a follower reaches the leader and crosses a current-term quorum barrier.
+6. A replicated deletion remains deleted after leader failure and re-election.
+
+Unit tests also cover conflict repair, vote freshness, state-machine replay, missing-key semantics, atomic persistence, and corrupt-state detection.
 
 ## Protocol scope and trade-offs
 
-This project follows Raft's core safety rules: one vote per term, log freshness checks, log-prefix matching, current-term majority commits, and persistence before successful RPC responses. To remain compact, it deliberately omits snapshots, dynamic membership, pre-vote, authentication, TLS, batching, and linearizable follower reads. Those are natural next steps for production hardening.
+This project follows Raft's core safety rules: one vote per term, log freshness checks, log-prefix matching, current-term majority commits, persistence before successful RPC responses, and a committed current-term barrier before linearizable reads. To remain compact, it deliberately omits snapshots, dynamic membership, pre-vote, authentication, TLS, batching, and follower leases. Those are natural next steps for production hardening.
+
+See [Architecture](docs/architecture.md) for the write/read paths and concurrency model, and [Safety notes](docs/safety.md) for the invariants, fault model, and explicit non-goals.
 
 ## Repository layout
 
@@ -135,6 +157,7 @@ raftstore/storage.py    Atomic durable state
 raftstore/server.py     HTTP client and peer API
 raftstore/client.py     Leader-discovering CLI
 tests/                  Unit and multi-process failure tests
+docs/                   Architecture and safety rationale
 docker-compose.yml      Three-node persistent cluster
 ```
 

@@ -95,3 +95,23 @@ class ClusterTest(unittest.TestCase):
             self.assertEqual(200, status)
         self.start(follower)
         for n in range(5): self.wait_value([follower], f"k{n}", n)
+
+    def test_linearizable_read_and_delete_survive_failover(self):
+        leader = self.leader()
+        status, body = self.call(leader, "GET", "/kv/session?consistency=eventual")
+        self.assertEqual(400, status)
+        self.assertIn("consistency", body["error"])
+        status, _ = self.call(leader, "PUT", "/kv/session", {"value": {"state": "active"}})
+        self.assertEqual(200, status)
+        follower = next(i for i in range(3) if i != leader)
+        status, body = self.call(follower, "GET", "/kv/session?consistency=linearizable")
+        self.assertEqual(200, status)
+        self.assertEqual("linearizable", body["consistency"])
+
+        status, _ = self.call(leader, "DELETE", "/kv/session")
+        self.assertEqual(200, status)
+        self.procs[leader].kill(); self.procs[leader].wait()
+        new_leader = self.leader()
+        status, body = self.call(new_leader, "GET", "/kv/session?consistency=linearizable")
+        self.assertEqual(404, status)
+        self.assertEqual("key not found", body["error"])
