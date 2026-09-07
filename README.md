@@ -1,5 +1,9 @@
 # Mini Raft Store
 
+[![CI](https://github.com/brohum10/mini-raft-store/actions/workflows/ci.yml/badge.svg)](https://github.com/brohum10/mini-raft-store/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A dependency-free, durable distributed key-value store that implements the essential Raft protocol. Three nodes elect a leader, replicate mutations to a majority, serve quorum-verified reads, survive process crashes, and repair lagging or conflicting logs after restart.
 
 > This is an educational Raft subset built to make the protocol inspectable. It is not a replacement for production systems such as etcd.
